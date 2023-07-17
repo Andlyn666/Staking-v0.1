@@ -1292,4 +1292,155 @@ contract StakingTest is Test {
         assertEq(_arpa.balanceOf(address(_staking)), 0);
         assertEq(_arpa.balanceOf(address(stakingMigrationTarget)), 0);
     }
+    function testAddRewardWhenDepleted() public {
+        uint256 rewardRate = _rewardAmount / 30 days;
+        uint256 userToStake = 1_000 * 1e18;
+        deal(address(_arpa), user1, 50 * userToStake);
+
+        uint256 nodeToStake = _operatorStakeAmount;
+        deal(address(_arpa), node1, nodeToStake);
+
+        address[] memory operators = new address[](1);
+        operators[0] = node1;
+        vm.prank(admin);
+        _staking.addOperators(operators);
+
+        // before the pool starts
+        vm.prank(node1);
+        _arpa.approve(address(_staking), nodeToStake);
+        vm.prank(node1);
+        _staking.stake(nodeToStake);
+        assertEq(_staking.getBaseReward(node1), 0);
+        assertEq(_staking.getDelegationReward(node1), 0);
+
+        vm.warp(0 days);
+        vm.prank(admin);
+        _arpa.approve(address(_staking), _rewardAmount);
+        vm.prank(admin);
+        // T0
+        _staking.start(_rewardAmount, 30 days);
+
+        vm.prank(user1);
+        _arpa.approve(address(_staking), 50 * userToStake);
+        vm.prank(user1);
+        _staking.stake(50 * userToStake);
+        assertEq(_staking.getBaseReward(user1), 0);
+        assertEq(_staking.getDelegationReward(user1), 0);
+
+        // T3
+        vm.warp(3 * 1 days);
+        assertApproxEqAbs(_staking.getBaseReward(user1), rewardRate * 3 days * 95 / 100, 1e18);
+        assertEq(_staking.getDelegationReward(user1), 0);
+
+        deal(address(_arpa), user2, 30 * userToStake);
+        vm.prank(user2);
+        _arpa.approve(address(_staking), 30 * userToStake);
+        vm.prank(user2);
+        _staking.stake(30 * userToStake);
+        assertEq(_staking.getBaseReward(user2), 0);
+
+        // T30
+        vm.warp(30 * 1 days);
+        assertApproxEqAbs(_staking.getBaseReward(user2), rewardRate * 27 days * 30 / 80 * 95 / 100, 1e18);
+        assertApproxEqAbs(_staking.getBaseReward(user1), (rewardRate * 27 days * 50 / 80 + rewardRate * 3 days) * 95 / 100,  1e18);
+
+        // T35
+        vm.warp(35 * 1 days);
+        // add reward
+        deal(address(_arpa), admin, _rewardAmount);
+        vm.prank(admin);
+        _arpa.approve(address(_staking), _rewardAmount);
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(StakingPoolLib.InvalidPoolStatus.selector, false, true));
+        _staking.addReward(_rewardAmount, 30 days);
+        vm.prank(admin);
+        _staking.newReward(_rewardAmount, 30 days);
+        assertApproxEqAbs(_staking.getBaseReward(user2), rewardRate * 27 days * 30 / 80 * 95 / 100, 1e18);
+        assertApproxEqAbs(_staking.getBaseReward(user1), (rewardRate * 27 days * 50 / 80 + rewardRate * 3 days) * 95 / 100,  1e18);
+
+        vm.warp(40 * 1 days);
+
+        assertApproxEqAbs(_staking.getBaseReward(user2), rewardRate * 30 / 80 * 95 / 100 * 32 days, 1e18);
+        assertApproxEqAbs(_staking.getBaseReward(user1), (rewardRate * 50 / 80 * 32 days + rewardRate * 3 days) * 95 / 100,  1e18);
+    }
+
+    function testStakingCapIncrease() public {
+        uint256 userToStake = 1_000_000 * 1e18;
+        uint256 rewardRate = _rewardAmount / 30 days;
+        deal(address(_arpa), user1, 5 * userToStake);
+
+        uint256 nodeToStake = _operatorStakeAmount;
+        deal(address(_arpa), node1, nodeToStake);
+
+        address[] memory operators = new address[](3);
+        operators[0] = node1;
+        operators[1] = node2;
+        operators[2] = node3;
+        vm.prank(admin);
+        _staking.addOperators(operators);
+        // before the pool starts
+        vm.prank(node1);
+        _arpa.approve(address(_staking), nodeToStake);
+        vm.prank(node1);
+        _staking.stake(nodeToStake);
+        assertEq(_staking.getBaseReward(node1), 0);
+        assertEq(_staking.getDelegationReward(node1), 0);
+
+        vm.warp(0 days);
+        vm.prank(admin);
+        _arpa.approve(address(_staking), _rewardAmount);
+        vm.prank(admin);
+        // T0
+        _staking.start(_rewardAmount, 30 days);
+
+        vm.prank(admin);
+        _staking.setPoolConfig(100_000_00 * 1e18, 100_000_00 * 1e18);
+
+        vm.prank(user1);
+        _arpa.approve(address(_staking), 5 * userToStake);
+        vm.prank(user1);
+        _staking.stake(5 * userToStake);
+        assertEq(_staking.getBaseReward(user1), 0);
+        assertEq(_staking.getDelegationReward(user1), 0);
+
+        // T3
+        vm.warp(3 * 1 days);
+        assertApproxEqAbs(_staking.getBaseReward(user1), rewardRate * 3 days * 95 / 100, 1e18);
+        assertEq(_staking.getDelegationReward(user1), 0);
+
+        deal(address(_arpa), user2, 5 * userToStake);
+        vm.prank(user2);
+        _arpa.approve(address(_staking), 5 * userToStake);
+        vm.prank(user2);
+        _staking.stake(5 * userToStake);
+        assertEq(_staking.getBaseReward(user2), 0);
+
+        // T5
+        vm.warp(5 * 1 days);
+        deal(address(_arpa), user3,  10 * userToStake);
+        vm.prank(user3);
+        _arpa.approve(address(_staking), 10 * userToStake);
+        vm.prank(user3);
+        vm.expectRevert();
+        _staking.stake(10 * userToStake);
+        
+        // T31
+        vm.warp(31 * 1 days);
+        deal(address(_arpa), admin, _rewardAmount);
+        vm.prank(admin);
+        _arpa.approve(address(_staking), _rewardAmount);
+        vm.prank(admin);
+        _staking.newReward(_rewardAmount, 30 days);
+        vm.prank(admin);
+        _staking.setPoolConfig(200_000_00 * 1e18, 100_000_00 * 1e18);
+        vm.prank(user3);
+        _staking.stake(5 * userToStake);
+
+        // T35
+        vm.warp(35 * 1 days);
+        //rewardRate * (27 days * (500,000/1,000,000) + 4 days * (500,000/1,500,000))
+        assertApproxEqAbs(_staking.getBaseReward(user1), rewardRate * (3 days + 27 days * 5 / 10 + 4 days * (5 / 15)) * 95 / 100, 1e18);
+        assertApproxEqAbs(_staking.getBaseReward(user2), rewardRate * (27 days * 5 / 10 + 4 days * (5 / 15)) * 95 / 100, 1e18);
+        assertApproxEqAbs(_staking.getBaseReward(user3), rewardRate * (4 days * (5 / 15)) * 95 / 100, 1e18);
+    }
 }
